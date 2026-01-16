@@ -1,0 +1,49 @@
+# PPTX Narrator - Dependencias
+# ============================
+# Atualizacao pip 
+# 
+
+# pip install --upgrade pip
+
+# Interface grafica
+customtkinter>=5.0.0
+
+# Text-to-Speech
+edge-tts>=6.1.0
+
+# PowerPoint
+python-pptx>=0.6.21
+
+# Audio
+pydub>=0.25.0
+mutagen>=1.45.0  # Para ler duracaoo de audio (compatível Python 3.13)
+
+# Imagens
+Pillow>=9.0.0
+
+# Video
+
+moviepy
+imageio-ffmpeg
+
+# Opcional - TTS Offline
+pyttsx3>=2.90
+#
+# Opcional - Vídeo
+moviepy>=1.0.0
+imageio>=2.9.0
+imageio-ffmpeg>=0.4.0
+proglog>=0.1.0
+
+# windows 10/11 - video
+PyMuPDF
+
+# Opcional - Reproducao de áudio
+pygame>=2.0.0
+
+# Opcional - TTS Offline Neural (alta qualidade)
+piper-tts>=1.2.0
+
+# Opcional - Traducao
+deep-translator>=1.11.0
+argostranslate>=1.9.0

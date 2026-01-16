@@ -1,0 +1,15 @@
+{
+  "idioma": "pt-PT",
+  "motor_tts": "edge",
+  "voz": "pt-PT-DuarteNeural",
+  "velocidade": 0.85,
+  "velocidade_trad": 0.85,
+  "idioma_voz": "pt-PT",
+  "mostrar_icone": true,
+  "posicao_icone": "sup_dir",
+  "tamanho_icone": 1.0,
+  "tempo_extra_slide": 5.0,
+  "pasta_saida": "/Volumes/FRC256GB/Vwind/saida/ficheiroleitura2",
+  "pasta_saida_html5": "/Volumes/FRC256GB/Vwind/saida/ficheiroleitura2/HTML5",
+  "audio_junto_pptx": false
+}
