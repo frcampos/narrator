@@ -32,6 +32,189 @@ from PIL import Image
 
 from pptx_handler import GestorPPTX, SlideInfo
 
+# Para análise inteligente de áudio no karaoke
+try:
+    from pydub import AudioSegment
+    from pydub.silence import detect_nonsilent
+    PYDUB_DISPONIVEL = True
+except ImportError:
+    PYDUB_DISPONIVEL = False
+
+
+# === FUNÇÕES AUXILIARES PARA KARAOKE INTELIGENTE ===
+
+# Palavras de função (rápidas) por idioma
+PALAVRAS_FUNCAO = {
+    'pt': {'a', 'o', 'os', 'as', 'de', 'da', 'do', 'das', 'dos', 'em', 'na', 'no', 'nas', 'nos',
+           'para', 'com', 'por', 'que', 'se', 'e', 'ou', 'um', 'uma', 'mais', 'como', 'é', 'ao'},
+    'en': {'a', 'an', 'the', 'of', 'to', 'in', 'on', 'at', 'by', 'for', 'with', 'from',
+           'and', 'or', 'but', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had'},
+    'es': {'el', 'la', 'los', 'las', 'un', 'una', 'de', 'del', 'en', 'con', 'por', 'para',
+           'y', 'o', 'que', 'se', 'es', 'al', 'como', 'más'},
+    'fr': {'le', 'la', 'les', 'un', 'une', 'de', 'du', 'des', 'en', 'à', 'au', 'aux',
+           'et', 'ou', 'que', 'se', 'est', 'sont', 'avec', 'pour', 'par', 'dans'}
+}
+
+
+def detectar_idioma_texto(texto: str) -> str:
+    """Detecta o idioma do texto baseado em palavras comuns."""
+    palavras = texto.lower().split()
+    contadores = {idioma: 0 for idioma in PALAVRAS_FUNCAO}
+    
+    for palavra in palavras[:20]:  # Verificar primeiras 20 palavras
+        palavra_limpa = palavra.strip('.,!?;:')
+        for idioma, palavras_func in PALAVRAS_FUNCAO.items():
+            if palavra_limpa in palavras_func:
+                contadores[idioma] += 1
+    
+    idioma_detectado = max(contadores.items(), key=lambda x: x[1])[0]
+    return idioma_detectado if contadores[idioma_detectado] > 0 else 'pt'
+
+
+def calcular_peso_palavra(palavra: str, idioma: str = 'pt') -> float:
+    """
+    Calcula o peso de uma palavra para distribuição de tempo.
+    Palavras mais longas e complexas recebem mais tempo.
+    """
+    palavra_limpa = palavra.strip('.,!?;:()[]{}""\'').lower()
+    
+    # Palavra vazia
+    if not palavra_limpa:
+        return 0.1
+    
+    # Peso base: comprimento da palavra
+    peso = len(palavra_limpa) * 0.15
+    
+    # Palavras de função são mais rápidas
+    palavras_func = PALAVRAS_FUNCAO.get(idioma, PALAVRAS_FUNCAO['pt'])
+    if palavra_limpa in palavras_func:
+        peso *= 0.5  # 50% mais rápido
+    
+    # Pontuação adiciona pausa
+    if any(c in palavra for c in '.,!?;:'):
+        peso += 0.3
+    
+    # Palavras muito longas (>12 caracteres) ganham tempo extra
+    if len(palavra_limpa) > 12:
+        peso += 0.2
+    
+    # Mínimo de peso
+    return max(peso, 0.2)
+
+
+def detectar_limites_audio(caminho_audio: str) -> tuple:
+    """
+    Detecta o início e fim real da fala no áudio (remove silêncios).
+    Retorna (tempo_inicio, tempo_fim) em segundos.
+    """
+    if not PYDUB_DISPONIVEL or not os.path.exists(caminho_audio):
+        return (0.0, 0.0)
+    
+    try:
+        audio = AudioSegment.from_file(caminho_audio)
+        duracao_total = len(audio) / 1000.0  # ms para segundos
+        
+        # Detectar segmentos não silenciosos
+        # min_silence_len: mínimo de silêncio para considerar (ms)
+        # silence_thresh: threshold de volume (dBFS)
+        nao_silenciosos = detect_nonsilent(
+            audio,
+            min_silence_len=100,  # 100ms
+            silence_thresh=audio.dBFS - 16  # 16dB abaixo da média
+        )
+        
+        if not nao_silenciosos:
+            return (0.0, duracao_total)
+        
+        # Primeiro e último segmento de fala
+        inicio_fala = nao_silenciosos[0][0] / 1000.0  # ms para segundos
+        fim_fala = nao_silenciosos[-1][1] / 1000.0
+        
+        # Adicionar pequena margem (50ms) para não cortar abruptamente
+        inicio_fala = max(0, inicio_fala - 0.05)
+        fim_fala = min(duracao_total, fim_fala + 0.05)
+        
+        return (inicio_fala, fim_fala)
+        
+    except Exception as e:
+        print(f"Aviso: Não foi possível analisar áudio para karaoke: {e}")
+        return (0.0, 0.0)
+
+
+def calcular_timings_inteligentes(palavras: List[str], duracao_audio: float, 
+                                  caminho_audio: str = None) -> List[dict]:
+    """
+    Calcula timings de palavras de forma inteligente usando análise heurística.
+    
+    Retorna lista de dicionários com 'start' e 'end' para cada palavra.
+    """
+    if not palavras:
+        return []
+    
+    # Detectar idioma
+    texto_completo = ' '.join(palavras)
+    idioma = detectar_idioma_texto(texto_completo)
+    
+    # Detectar limites reais de fala
+    inicio_fala = 0.0
+    fim_fala = duracao_audio
+    
+    if caminho_audio and PYDUB_DISPONIVEL:
+        inicio_fala, fim_fala = detectar_limites_audio(caminho_audio)
+        if fim_fala == 0.0:  # Falhou a detecção
+            fim_fala = duracao_audio
+    
+    # NOVO: Margem de segurança no final
+    margem_final = 0.1  # 100ms
+    duracao_real = fim_fala - inicio_fala
+    duracao_util = max(duracao_real - margem_final, duracao_real * 0.95)
+    
+    # Calcular pesos de cada palavra
+    pesos = [calcular_peso_palavra(p, idioma) for p in palavras]
+    peso_total = sum(pesos)
+    
+    if peso_total == 0:
+        peso_total = 1.0
+    
+    # MELHORADO: Limites adaptativos baseados na velocidade média
+    tempo_medio_palavra = duracao_util / len(palavras)
+    tempo_minimo = min(0.12, tempo_medio_palavra * 0.3)
+    tempo_maximo = max(2.0, tempo_medio_palavra * 3.0)
+    
+    # Distribuir tempo proporcionalmente aos pesos
+    timings = []
+    tempo_acumulado = inicio_fala
+    
+    for i, peso in enumerate(pesos):
+        duracao_palavra = (peso / peso_total) * duracao_util
+        
+        # MELHORADO: Limites adaptativos
+        duracao_palavra = max(tempo_minimo, min(duracao_palavra, tempo_maximo))
+        
+        fim_palavra = tempo_acumulado + duracao_palavra
+        
+        # NOVO: Garantir que não ultrapassa duração útil
+        if fim_palavra > inicio_fala + duracao_util:
+            fim_palavra = inicio_fala + duracao_util
+        
+        # Última palavra: sempre terminar no fim_fala (sem margem)
+        if i == len(pesos) - 1:
+            fim_palavra = fim_fala
+        
+        timings.append({
+            'start': tempo_acumulado,
+            'end': fim_palavra
+        })
+        
+        tempo_acumulado = fim_palavra
+    
+    # NOVO: Validação e ajuste para evitar sobreposições
+    for i in range(len(timings) - 1):
+        if timings[i]['end'] > timings[i + 1]['start']:
+            timings[i]['end'] = timings[i + 1]['start']
+    
+    return timings
+
 
 @dataclass
 class ConfigVideo:
@@ -621,7 +804,7 @@ class GeradorVideo:
     def _gerar_clips_karaoke(self, img_base: str, texto: str, duracao_slide: float, 
                              audio_path: str, ficheiros_temp: List[str],
                              duracao_audio: float = None) -> List:
-        """Gera clips com efeito karaoke (destaque palavra-a-palavra)."""
+        """Gera clips com efeito karaoke (destaque palavra-a-palavra) usando timings inteligentes."""
         palavras = texto.strip().split()
         num_palavras = len(palavras)
         
@@ -630,19 +813,54 @@ class GeradorVideo:
         
         duracao_para_palavras = duracao_audio if duracao_audio and duracao_audio > 0 else duracao_slide
         
-        tempo_por_palavra = duracao_para_palavras / num_palavras
+        # === NOVO: Usar timings inteligentes ===
+        timings_palavras = calcular_timings_inteligentes(
+            palavras, 
+            duracao_para_palavras,
+            audio_path if audio_path and os.path.exists(audio_path) else None
+        )
         
+        # Se falhou, usar método antigo (linear)
+        if not timings_palavras:
+            tempo_por_palavra = duracao_para_palavras / num_palavras
+            timings_palavras = [
+                {'start': i * tempo_por_palavra, 'end': (i + 1) * tempo_por_palavra}
+                for i in range(num_palavras)
+            ]
+        
+        # Agrupar palavras se frames muito curtos (< 0.3s)
         min_tempo_frame = 0.3
-        if tempo_por_palavra < min_tempo_frame:
-            palavras_por_frame = max(1, int(min_tempo_frame / tempo_por_palavra))
-            grupos_palavras = []
-            for i in range(0, num_palavras, palavras_por_frame):
-                grupos_palavras.append(palavras[i:i + palavras_por_frame])
-        else:
-            grupos_palavras = [[p] for p in palavras]
+        grupos_palavras = []
+        grupos_timings = []
+        
+        grupo_atual = []
+        timing_inicio = None
+        
+        for i, (palavra, timing) in enumerate(zip(palavras, timings_palavras)):
+            duracao_palavra = timing['end'] - timing['start']
+            
+            if timing_inicio is None:
+                timing_inicio = timing['start']
+            
+            grupo_atual.append(palavra)
+            duracao_grupo = timing['end'] - timing_inicio
+            
+            # Se grupo já tem duração suficiente ou é última palavra
+            if duracao_grupo >= min_tempo_frame or i == num_palavras - 1:
+                grupos_palavras.append(grupo_atual)
+                grupos_timings.append({'start': timing_inicio, 'end': timing['end']})
+                grupo_atual = []
+                timing_inicio = None
+        
+        # Se sobrou grupo incompleto, adicionar
+        if grupo_atual:
+            grupos_palavras.append(grupo_atual)
+            grupos_timings.append({
+                'start': timing_inicio,
+                'end': timings_palavras[-1]['end']
+            })
         
         num_frames = len(grupos_palavras)
-        tempo_por_frame_audio = duracao_para_palavras / num_frames
         tempo_extra_final = max(0, duracao_slide - duracao_para_palavras)
         
         clips = []
@@ -656,7 +874,7 @@ class GeradorVideo:
             except Exception as e:
                 print(f"Erro ao carregar áudio: {e}")
         
-        for idx, grupo in enumerate(grupos_palavras):
+        for idx, (grupo, timing) in enumerate(zip(grupos_palavras, grupos_timings)):
             idx_palavra_inicio = sum(len(g) for g in grupos_palavras[:idx])
             idx_palavra_fim = idx_palavra_inicio + len(grupo) - 1
             
@@ -665,10 +883,12 @@ class GeradorVideo:
             )
             ficheiros_temp.append(img_karaoke)
             
+            # Duração baseada nos timings calculados
+            duracao_frame = timing['end'] - timing['start']
+            
+            # Último frame: adicionar tempo extra
             if idx == num_frames - 1:
-                duracao_frame = tempo_por_frame_audio + tempo_extra_final
-            else:
-                duracao_frame = tempo_por_frame_audio
+                duracao_frame += tempo_extra_final
             
             if MOVIEPY_V2:
                 clip = ImageClip(img_karaoke, duration=duracao_frame)
