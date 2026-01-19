@@ -903,6 +903,133 @@ html, body {{
         js = '''/* PPTX Narrator - HTML5 Player JavaScript */
 /* Gerado automaticamente - v1.0 */
 
+// === FUNÇÕES AUXILIARES PARA KARAOKE INTELIGENTE ===
+
+// Palavras de função (rápidas) por idioma
+const PALAVRAS_FUNCAO = {
+    'pt': new Set(['a', 'o', 'os', 'as', 'de', 'da', 'do', 'das', 'dos', 'em', 'na', 'no', 'nas', 'nos',
+                   'para', 'com', 'por', 'que', 'se', 'e', 'ou', 'um', 'uma', 'mais', 'como', 'é', 'ao']),
+    'en': new Set(['a', 'an', 'the', 'of', 'to', 'in', 'on', 'at', 'by', 'for', 'with', 'from',
+                   'and', 'or', 'but', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had']),
+    'es': new Set(['el', 'la', 'los', 'las', 'un', 'una', 'de', 'del', 'en', 'con', 'por', 'para',
+                   'y', 'o', 'que', 'se', 'es', 'al', 'como', 'más']),
+    'fr': new Set(['le', 'la', 'les', 'un', 'une', 'de', 'du', 'des', 'en', 'à', 'au', 'aux',
+                   'et', 'ou', 'que', 'se', 'est', 'sont', 'avec', 'pour', 'par', 'dans'])
+};
+
+function detectarIdiomaTexto(texto) {
+    const palavras = texto.toLowerCase().split(/\\s+/).slice(0, 20);
+    const contadores = { pt: 0, en: 0, es: 0, fr: 0 };
+    
+    palavras.forEach(palavra => {
+        const palavraLimpa = palavra.replace(/[.,!?;:()\\[\\]{}""']/g, '');
+        Object.keys(PALAVRAS_FUNCAO).forEach(idioma => {
+            if (PALAVRAS_FUNCAO[idioma].has(palavraLimpa)) {
+                contadores[idioma]++;
+            }
+        });
+    });
+    
+    let idiomaMax = 'pt';
+    let maxCount = 0;
+    Object.entries(contadores).forEach(([idioma, count]) => {
+        if (count > maxCount) {
+            maxCount = count;
+            idiomaMax = idioma;
+        }
+    });
+    
+    return maxCount > 0 ? idiomaMax : 'pt';
+}
+
+function calcularPesoPalavra(palavra, idioma = 'pt') {
+    const palavraLimpa = palavra.replace(/[.,!?;:()\\[\\]{}""']/g, '').toLowerCase();
+    
+    if (!palavraLimpa) return 0.1;
+    
+    // Peso base: comprimento da palavra
+    let peso = palavraLimpa.length * 0.15;
+    
+    // Palavras de função são mais rápidas
+    const palavrasFunc = PALAVRAS_FUNCAO[idioma] || PALAVRAS_FUNCAO['pt'];
+    if (palavrasFunc.has(palavraLimpa)) {
+        peso *= 0.5;  // 50% mais rápido
+    }
+    
+    // Pontuação adiciona pausa
+    if (/[.,!?;:]/.test(palavra)) {
+        peso += 0.3;
+    }
+    
+    // Palavras muito longas ganham tempo extra
+    if (palavraLimpa.length > 12) {
+        peso += 0.2;
+    }
+    
+    return Math.max(peso, 0.2);
+}
+
+function calcularTimingsInteligentes(palavras, duracao) {
+    if (!palavras || palavras.length === 0) return [];
+    
+    const textoCompleto = palavras.join(' ');
+    const idioma = detectarIdiomaTexto(textoCompleto);
+    
+    // Calcular pesos de cada palavra
+    const pesos = palavras.map(p => calcularPesoPalavra(p, idioma));
+    const pesoTotal = pesos.reduce((a, b) => a + b, 0) || 1;
+    
+    // NOVO: Reservar margem no final para evitar dessincronização
+    const margemFinal = 0.1; // 100ms de margem de segurança
+    const duracaoUtil = Math.max(duracao - margemFinal, duracao * 0.95);
+    
+    // Distribuir tempo proporcionalmente aos pesos
+    const timings = [];
+    let tempoAcumulado = 0;
+    
+    pesos.forEach((peso, i) => {
+        let duracaoPalavra = (peso / pesoTotal) * duracaoUtil;
+        
+        // MELHORADO: Limites adaptativos baseados na velocidade média
+        const tempoMedioPorPalavra = duracaoUtil / palavras.length;
+        const minimo = Math.min(0.12, tempoMedioPorPalavra * 0.3);
+        const maximo = Math.max(2.0, tempoMedioPorPalavra * 3.0);
+        
+        duracaoPalavra = Math.max(minimo, Math.min(duracaoPalavra, maximo));
+        
+        let fimPalavra = tempoAcumulado + duracaoPalavra;
+        
+        // NOVO: Garantir que não ultrapassa a duração útil
+        if (fimPalavra > duracaoUtil) {
+            fimPalavra = duracaoUtil;
+        }
+        
+        // Última palavra: sempre terminar na duração total (sem margem)
+        if (i === pesos.length - 1) {
+            timings.push({
+                start: tempoAcumulado,
+                end: duracao
+            });
+        } else {
+            timings.push({
+                start: tempoAcumulado,
+                end: fimPalavra
+            });
+        }
+        
+        tempoAcumulado = fimPalavra;
+    });
+    
+    // NOVO: Validação e ajuste final para evitar sobreposições
+    for (let i = 0; i < timings.length - 1; i++) {
+        if (timings[i].end > timings[i + 1].start) {
+            timings[i].end = timings[i + 1].start;
+        }
+    }
+    
+    return timings;
+}
+
 class PresentationPlayer {
     constructor() {
         this.currentSlide = 0;
@@ -914,6 +1041,7 @@ class PresentationPlayer {
         this.wordTimings = [];
         this.currentWordIndex = 0;
         this.currentWordCount = 0;  // Para recalcular timings quando áudio carrega
+        this.currentWords = [];  // Para recalcular com timings inteligentes
         
         this.init();
     }
@@ -1178,30 +1306,39 @@ class PresentationPlayer {
         // Dividir em palavras e criar spans
         if (config?.karaoke?.enabled && text) {
             const words = text.split(/\\s+/).filter(w => w.length > 0);
-            this.currentWordCount = words.length;  // Guardar para recalcular em onAudioLoaded
+            this.currentWordCount = words.length;
+            this.currentWords = words;  // Guardar palavras para recalcular
             
             this.elements.karaokeText.innerHTML = words.map((word, i) => 
                 `<span class="karaoke-word" data-index="${i}">${word}</span>`
             ).join(' ');
             
-            // Calcular timings iniciais (serão recalculados quando o áudio carregar)
-            this.calculateWordTimings(words.length, slide.duration || 5);
+            // Calcular timings inteligentes iniciais
+            this.calculateWordTimings(words, slide.duration || 5);
         } else {
             this.currentWordCount = 0;
+            this.currentWords = [];
             this.elements.karaokeText.textContent = text || '';
         }
     }
     
-    calculateWordTimings(wordCount, duration) {
-        // Timing aproximado por palavra
-        this.wordTimings = [];
-        const timePerWord = duration / wordCount;
-        
-        for (let i = 0; i < wordCount; i++) {
-            this.wordTimings.push({
-                start: i * timePerWord,
-                end: (i + 1) * timePerWord
-            });
+    calculateWordTimings(words, duration) {
+        // Se recebeu array de palavras, usar timings inteligentes
+        if (Array.isArray(words)) {
+            this.wordTimings = calcularTimingsInteligentes(words, duration);
+        } 
+        // Compatibilidade: se recebeu número, usar método antigo
+        else {
+            const wordCount = words;
+            this.wordTimings = [];
+            const timePerWord = duration / wordCount;
+            
+            for (let i = 0; i < wordCount; i++) {
+                this.wordTimings.push({
+                    start: i * timePerWord,
+                    end: (i + 1) * timePerWord
+                });
+            }
         }
         
         this.currentWordIndex = 0;
@@ -1268,15 +1405,54 @@ class PresentationPlayer {
     updateKaraoke() {
         const currentTime = this.audioElement.currentTime;
         
-        // Encontrar palavra actual
-        for (let i = 0; i < this.wordTimings.length; i++) {
+        // NOVO: Tolerância para evitar saltos (50ms)
+        const tolerancia = 0.05;
+        
+        // MELHORADO: Começar pela palavra atual para otimizar
+        // Se ainda estamos na mesma palavra, não fazer nada
+        if (this.currentWordIndex < this.wordTimings.length) {
+            const timingAtual = this.wordTimings[this.currentWordIndex];
+            if (currentTime >= timingAtual.start - tolerancia && 
+                currentTime < timingAtual.end + tolerancia) {
+                return; // Ainda na mesma palavra
+            }
+        }
+        
+        // MELHORADO: Busca otimizada (procurar à frente e atrás)
+        let encontrado = false;
+        
+        // 1. Verificar próximas 3 palavras (caso mais comum)
+        for (let offset = 1; offset <= 3 && this.currentWordIndex + offset < this.wordTimings.length; offset++) {
+            const i = this.currentWordIndex + offset;
             const timing = this.wordTimings[i];
             
-            if (currentTime >= timing.start && currentTime < timing.end) {
-                if (i !== this.currentWordIndex) {
-                    this.highlightWord(i);
-                }
+            if (currentTime >= timing.start - tolerancia && currentTime < timing.end + tolerancia) {
+                this.highlightWord(i);
+                encontrado = true;
                 break;
+            }
+        }
+        
+        // 2. Se não encontrou, buscar todas
+        if (!encontrado) {
+            for (let i = 0; i < this.wordTimings.length; i++) {
+                const timing = this.wordTimings[i];
+                
+                if (currentTime >= timing.start - tolerancia && currentTime < timing.end + tolerancia) {
+                    if (i !== this.currentWordIndex) {
+                        this.highlightWord(i);
+                    }
+                    encontrado = true;
+                    break;
+                }
+            }
+        }
+        
+        // 3. Se passou do tempo total, destacar última palavra
+        if (!encontrado && this.wordTimings.length > 0) {
+            const ultimoTiming = this.wordTimings[this.wordTimings.length - 1];
+            if (currentTime >= ultimoTiming.end - tolerancia) {
+                this.highlightWord(this.wordTimings.length - 1);
             }
         }
     }
@@ -1326,8 +1502,30 @@ class PresentationPlayer {
         }
         
         // IMPORTANTE: Recalcular timings do karaoke com a duração REAL do áudio
-        // Isto corrige o problema de áudios traduzidos com duração diferente
-        if (this.currentWordCount > 0 && realDuration > 0) {
+        if (this.currentWords.length > 0 && realDuration > 0) {
+            // NOVO: Log para debug
+            console.log(`🎵 Karaoke: Recalculando para ${this.currentWords.length} palavras, ${realDuration.toFixed(2)}s`);
+            
+            // Recalcular com duração real
+            this.wordTimings = calcularTimingsInteligentes(this.currentWords, realDuration);
+            this.currentWordIndex = 0;
+            
+            // NOVO: Validação de timings
+            if (this.wordTimings.length !== this.currentWords.length) {
+                console.warn('⚠️ Número de timings diferente do número de palavras!');
+            }
+            
+            // NOVO: Log dos primeiros timings para debug
+            if (this.wordTimings.length > 0) {
+                console.log(`  → Primeira palavra: ${this.wordTimings[0].start.toFixed(2)}s - ${this.wordTimings[0].end.toFixed(2)}s`);
+                if (this.wordTimings.length > 1) {
+                    console.log(`  → Segunda palavra: ${this.wordTimings[1].start.toFixed(2)}s - ${this.wordTimings[1].end.toFixed(2)}s`);
+                }
+                console.log(`  → Última palavra: ${this.wordTimings[this.wordTimings.length-1].start.toFixed(2)}s - ${this.wordTimings[this.wordTimings.length-1].end.toFixed(2)}s`);
+            }
+        } 
+        // Fallback: usar método antigo se não tiver palavras
+        else if (this.currentWordCount > 0 && realDuration > 0) {
             this.calculateWordTimings(this.currentWordCount, realDuration);
         }
     }

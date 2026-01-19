@@ -44,7 +44,7 @@ TRADUCOES = {
         "lbl_fps": "Frames por segundo:",
         "motor_offline": "Offline (pyttsx3 - Sem Internet)",
         
-        "frame_icone": "Ãcone de Áudio no Slide",
+        "frame_icone": "Ícone de Áudio no Slide",
         "lbl_mostrar_icone": "Mostrar ícone:",
         "lbl_posicao": "Posição:",
         "lbl_tamanho": "Tamanho (cm):",
@@ -172,7 +172,7 @@ Funcionalidades:
         "lbl_fps": "Frames por segundo:",
         "motor_offline": "Offline (pyttsx3 - Sem Internet)",
         
-        "frame_icone": "Ãcone de Áudio no Slide",
+        "frame_icone": "Ícone de Áudio no Slide",
         "lbl_mostrar_icone": "Mostrar ícone:",
         "lbl_posicao": "Posição:",
         "lbl_tamanho": "Tamanho (cm):",
