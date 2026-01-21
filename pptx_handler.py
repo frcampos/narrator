@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-pptx_handler.py - ManipulaÃ§Ã£o de ficheiros PowerPoint
+pptx_handler.py - Manipulacao de ficheiros PowerPoint
 """
 
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -433,7 +434,28 @@ class GestorPPTX:
             # Guardar
             prs.save(caminho_saida)
             
-            # Limpar Ã­cones temporÃ¡rios
+            # v1.9.3: Copiar ficheiros de audio para a pasta do PPTX
+            pasta_pptx = os.path.dirname(caminho_saida)
+            for slide_info in self.apresentacao.slides:
+                # Copiar audio principal
+                if slide_info.caminho_audio and os.path.exists(slide_info.caminho_audio):
+                    pasta_audio = os.path.dirname(slide_info.caminho_audio)
+                    if pasta_audio != pasta_pptx:
+                        nome_audio = os.path.basename(slide_info.caminho_audio)
+                        destino = os.path.join(pasta_pptx, nome_audio)
+                        if not os.path.exists(destino):
+                            shutil.copy2(slide_info.caminho_audio, destino)
+                
+                # Copiar audio traduzido
+                if slide_info.caminho_audio_traduzido and os.path.exists(slide_info.caminho_audio_traduzido):
+                    pasta_audio = os.path.dirname(slide_info.caminho_audio_traduzido)
+                    if pasta_audio != pasta_pptx:
+                        nome_audio = os.path.basename(slide_info.caminho_audio_traduzido)
+                        destino = os.path.join(pasta_pptx, nome_audio)
+                        if not os.path.exists(destino):
+                            shutil.copy2(slide_info.caminho_audio_traduzido, destino)
+            
+            # Limpar icones temporarios
             for ic in [caminho_icone, caminho_icone_trad]:
                 if ic and os.path.exists(ic):
                     os.remove(ic)

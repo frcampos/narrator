@@ -8,8 +8,8 @@ Criado por Fernando Rui Campos
 """
 
 # Versão da aplicação
-APP_VERSAO = "1.9.2"
-APP_DATA = "2026-01-16"
+APP_VERSAO = "1.9.3"
+APP_DATA = "2026-01-21"
 
 import os
 import sys
@@ -135,6 +135,8 @@ class PPTXNarratorApp(ctk.CTk):
         self.a_processar = False
         self._pasta_saida = ""
         self._pasta_saida_html5 = ""  # v1.9.1: Pasta específica para HTML5
+        self._ultimo_ficheiro = ""  # v1.9.3: Último ficheiro gerado
+        self._usar_pasta_estruturada = True  # v1.9.3: Organizar em subpastas
         
         # v1.7.2: Inicializar TTS de tradução com idioma inglês por defeito
         self._inicializar_tts_traducao("en")
@@ -172,8 +174,8 @@ class PPTXNarratorApp(ctk.CTk):
                 self.pptx.config_icone.tamanho_cm = cfg.get("tamanho_icone", 1.0)
                 self.video.config.tempo_extra_slide = cfg.get("tempo_extra_slide", 5.0)
                 self._pasta_saida = cfg.get("pasta_saida", "")
-                self._pasta_saida_html5 = cfg.get("pasta_saida_html5", "")  # v1.9.1
-                self._audio_junto_pptx = cfg.get("audio_junto_pptx", True)
+                self._pasta_saida_html5 = cfg.get("pasta_saida_html5", "")
+                self._usar_pasta_estruturada = cfg.get("usar_pasta_estruturada", True)  # v1.9.3
         except: pass
     
     def guardar_config(self):
@@ -189,8 +191,8 @@ class PPTXNarratorApp(ctk.CTk):
             "tamanho_icone": self.pptx.config_icone.tamanho_cm,
             "tempo_extra_slide": self.video.config.tempo_extra_slide,
             "pasta_saida": self._pasta_saida,
-            "pasta_saida_html5": getattr(self, '_pasta_saida_html5', ''),  # v1.9.1
-            "audio_junto_pptx": getattr(self, '_audio_junto_pptx', True),
+            "pasta_saida_html5": getattr(self, '_pasta_saida_html5', ''),
+            "usar_pasta_estruturada": getattr(self, '_usar_pasta_estruturada', True),  # v1.9.3
         }
         try:
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
@@ -1052,8 +1054,14 @@ class PPTXNarratorApp(ctk.CTk):
                         variable=self.var_html_fonte_tamanho, width=130).pack(side="left", padx=10)
         ctk.CTkLabel(fap2, text="Fonte:").pack(side="left", padx=(20, 0))
         self.var_html_fonte_familia = ctk.StringVar(value="Sans-serif")
-        ctk.CTkComboBox(fap2, values=["Sans-serif", "Serif", "Monospace"],
-                        variable=self.var_html_fonte_familia, width=120).pack(side="right")
+
+        # ctk.CTkComboBox(fap2, values=["Sans-serif", "Serif", "Monospace"],
+         #               variable=self.var_html_fonte_familia, width=120).pack(side="right")
+
+         # Fontes padrão + fontes acessíveis para dislexia/baixa visão
+        ctk.CTkComboBox(fap2, values=["Sans-serif", "Serif", "Monospace", 
+                                       "Atkinson (acessível)", "Lexend (acessível)", "OpenDyslexic"],
+                        variable=self.var_html_fonte_familia, width=160).pack(side="right")
         
         # === BOTÕES DE ACÇÃO ===
         frame_acoes = ctk.CTkFrame(scroll)
@@ -1112,15 +1120,12 @@ class PPTXNarratorApp(ctk.CTk):
         self.lbl_opacidade_html.configure(text=f"{pct}%")
     
     def _obter_pasta_saida_html5(self) -> str:
-        """Obtém a pasta de saída para HTML5 - v1.9.1"""
+        """Obtém a pasta de saída para HTML5 - v1.9.3: usa pasta estruturada"""
         # Se tem pasta específica HTML5, usar essa
         if self._pasta_saida_html5:
             return self._pasta_saida_html5
-        # Senão, usar pasta geral
-        if self._pasta_saida:
-            return self._pasta_saida
-        # Senão, usar home
-        return os.path.expanduser("~")
+        # v1.9.3: Usar pasta estruturada
+        return self._obter_pasta_estruturada("html5")
     
     def _preview_html(self):
         """Pré-visualiza a exportação HTML"""
@@ -1162,7 +1167,7 @@ class PPTXNarratorApp(ctk.CTk):
             messagebox.showerror("Erro", f"Erro no preview: {e}")
     
     def _exportar_html(self):
-        """Exporta a apresentação para HTML5 - v1.9.1: com subpastas automáticas"""
+        """Exporta a apresentação para HTML5 - v1.9.3: usa pasta estruturada"""
         if not self.pptx.apresentacao:
             messagebox.showwarning("Aviso", "Por favor, abra uma apresentação primeiro.")
             return
@@ -1170,21 +1175,15 @@ class PPTXNarratorApp(ctk.CTk):
         # Obter configuração
         config = self._obter_config_html()
         
-        # Obter pasta base
+        # v1.9.3: Usar pasta estruturada
         pasta_base = self._obter_pasta_saida_html5()
-        nome_base = Path(self.pptx.apresentacao.caminho).stem if self.pptx.apresentacao else "apresentacao"
+        nome_base = self._obter_nome_base_apresentacao()
         
-        # v1.9.1: Criar subpastas automáticas
+        # Definir caminho de saída
         if config.format == "folder":
-            # Subpasta para estrutura de pasta
-            subpasta = os.path.join(pasta_base, "html_pasta")
-            os.makedirs(subpasta, exist_ok=True)
-            output_path = os.path.join(subpasta, f"{nome_base}_html")
+            output_path = os.path.join(pasta_base, f"{nome_base}_html")
         else:
-            # Subpasta para ficheiro único
-            subpasta = os.path.join(pasta_base, "html_unico")
-            os.makedirs(subpasta, exist_ok=True)
-            output_path = os.path.join(subpasta, f"{nome_base}.html")
+            output_path = os.path.join(pasta_base, f"{nome_base}.html")
         
         # Confirmar com utilizador
         msg = f"Exportar para:\n{output_path}\n\nContinuar?"
@@ -1218,11 +1217,17 @@ class PPTXNarratorApp(ctk.CTk):
                 
                 if exporter.export(output_path, slides_data, title):
                     self.lbl_estado.configure(text="HTML5 exportado!", text_color="green")
-                    self._log(f"✅ HTML5 exportado para: {output_path}")
+                    self._log(f"HTML5 exportado para: {output_path}")
+                    # Registar ficheiro para botões de acção
+                    if config.format == "folder":
+                        index_path = os.path.join(output_path, "index.html")
+                        self.after(0, lambda p=index_path: self._registar_ficheiro_gerado(p, "HTML5"))
+                    else:
+                        self.after(0, lambda p=output_path: self._registar_ficheiro_gerado(p, "HTML5"))
                     self.after(0, lambda: messagebox.showinfo("Sucesso", f"HTML5 exportado para:\n{output_path}"))
                 else:
                     self.lbl_estado.configure(text="Erro na exportação", text_color="red")
-                    self._log("❌ Falha na exportação HTML5")
+                    self._log("Falha na exportação HTML5")
                 
             except Exception as e:
                 self.lbl_estado.configure(text="Erro", text_color="red")
@@ -1288,7 +1293,15 @@ class PPTXNarratorApp(ctk.CTk):
         tamanhos_fonte = {"Pequeno": "small", "Médio": "medium", "Grande": "large", "Extra grande": "xlarge"}
         config.appearance.font_size = tamanhos_fonte.get(self.var_html_fonte_tamanho.get(), "medium")
         
-        familias = {"Sans-serif": "sans-serif", "Serif": "serif", "Monospace": "monospace"}
+        # Famílias de fonte: padrão + acessíveis
+        familias = {
+            "Sans-serif": "sans-serif", 
+            "Serif": "serif", 
+            "Monospace": "monospace",
+            "Atkinson (acessível)": "atkinson",
+            "Lexend (acessível)": "lexend",
+            "OpenDyslexic": "opendyslexic"
+        }
         config.appearance.font_family = familias.get(self.var_html_fonte_familia.get(), "sans-serif")
         
         return config
@@ -1369,6 +1382,35 @@ class PPTXNarratorApp(ctk.CTk):
                      font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=10, pady=(20, 5))
         self.txt_log = ctk.CTkTextbox(self.tab_progresso, height=250)
         self.txt_log.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        
+        # v1.9.3: Painel de acções rápidas
+        frame_acoes = ctk.CTkFrame(self.tab_progresso)
+        frame_acoes.pack(fill="x", padx=10, pady=(5, 10))
+        
+        self.btn_abrir_ficheiro = ctk.CTkButton(
+            frame_acoes, 
+            text="Abrir Ficheiro",
+            command=self._abrir_ultimo_ficheiro,
+            width=140,
+            state="disabled"
+        )
+        self.btn_abrir_ficheiro.pack(side="left", padx=5)
+        
+        self.btn_abrir_pasta = ctk.CTkButton(
+            frame_acoes,
+            text="Abrir Pasta",
+            command=self._abrir_pasta_saida,
+            width=140,
+            state="disabled"
+        )
+        self.btn_abrir_pasta.pack(side="left", padx=5)
+        
+        self.lbl_ultimo_ficheiro = ctk.CTkLabel(
+            frame_acoes,
+            text="",
+            text_color="gray"
+        )
+        self.lbl_ultimo_ficheiro.pack(side="left", padx=15)
     
     # === CALLBACKS ===
     def _obter_lista_vozes(self) -> List[str]:
@@ -1558,6 +1600,89 @@ class PPTXNarratorApp(ctk.CTk):
             self._pasta_saida = pasta
             self.lbl_pasta.configure(text=pasta)
     
+    def _abrir_ultimo_ficheiro(self):
+        """Abre o último ficheiro gerado com a aplicação predefinida do sistema"""
+        if not self._ultimo_ficheiro or not os.path.exists(self._ultimo_ficheiro):
+            return
+        try:
+            if sys.platform == 'win32':
+                os.startfile(self._ultimo_ficheiro)
+            elif sys.platform == 'darwin':
+                import subprocess
+                subprocess.run(['open', self._ultimo_ficheiro])
+            else:
+                import subprocess
+                subprocess.run(['xdg-open', self._ultimo_ficheiro])
+        except Exception as e:
+            self._log(f"Erro ao abrir ficheiro: {e}")
+    
+    def _abrir_pasta_saida(self):
+        """Abre a pasta de saída no explorador de ficheiros"""
+        pasta = ""
+        if self._ultimo_ficheiro and os.path.exists(self._ultimo_ficheiro):
+            pasta = os.path.dirname(self._ultimo_ficheiro)
+        elif self._pasta_saida and os.path.exists(self._pasta_saida):
+            pasta = self._pasta_saida
+        
+        if not pasta:
+            return
+        
+        try:
+            if sys.platform == 'win32':
+                os.startfile(pasta)
+            elif sys.platform == 'darwin':
+                import subprocess
+                subprocess.run(['open', pasta])
+            else:
+                import subprocess
+                subprocess.run(['xdg-open', pasta])
+        except Exception as e:
+            self._log(f"Erro ao abrir pasta: {e}")
+    
+    def _registar_ficheiro_gerado(self, caminho: str, tipo: str = ""):
+        """Regista o último ficheiro gerado e actualiza interface"""
+        if not caminho or not os.path.exists(caminho):
+            return
+        
+        self._ultimo_ficheiro = caminho
+        nome_ficheiro = os.path.basename(caminho)
+        
+        # Actualizar label e botões
+        self.lbl_ultimo_ficheiro.configure(text=f"{tipo}: {nome_ficheiro}" if tipo else nome_ficheiro)
+        self.btn_abrir_ficheiro.configure(state="normal")
+        self.btn_abrir_pasta.configure(state="normal")
+    
+    def _obter_pasta_base(self) -> str:
+        """Obtém a pasta base de saída (pasta do PPTX original ou pasta configurada)"""
+        if self._pasta_saida:
+            return self._pasta_saida
+        elif self.pptx.apresentacao and self.pptx.apresentacao.caminho:
+            return os.path.dirname(self.pptx.apresentacao.caminho)
+        else:
+            return os.path.expanduser("~")
+    
+    def _obter_pasta_estruturada(self, tipo: str) -> str:
+        """
+        Obtém pasta estruturada por tipo de ficheiro.
+        tipo: 'audio', 'pptx', 'video', 'html5'
+        Cria a pasta se não existir.
+        """
+        pasta_base = self._obter_pasta_base()
+        
+        if self._usar_pasta_estruturada:
+            pasta = os.path.join(pasta_base, tipo)
+        else:
+            pasta = pasta_base
+        
+        os.makedirs(pasta, exist_ok=True)
+        return pasta
+    
+    def _obter_nome_base_apresentacao(self) -> str:
+        """Obtém o nome base da apresentação (sem extensão)"""
+        if self.pptx.apresentacao and self.pptx.apresentacao.caminho:
+            return Path(self.pptx.apresentacao.caminho).stem
+        return "apresentacao"
+    
     def _guardar_texto_slide(self, event=None):
         if self.pptx.apresentacao:
             texto = self.txt_narrar.get("1.0", "end-1c")
@@ -1738,15 +1863,8 @@ class PPTXNarratorApp(ctk.CTk):
             
             passo_atual = 0
             
-            # Determinar pasta de saída
-            if getattr(self, '_audio_junto_pptx', True):
-                pasta = os.path.dirname(self.pptx.apresentacao.caminho)
-            elif self._pasta_saida:
-                pasta = self._pasta_saida
-            else:
-                pasta = tempfile.mkdtemp(prefix="pptx_audio_")
-            
-            os.makedirs(pasta, exist_ok=True)
+            # Determinar pasta de saída - v1.9.3: usar pasta estruturada
+            pasta = self._obter_pasta_estruturada("audio")
             
             # PASSO 1: Gerar áudios originais
             self.after(0, lambda: self._log("=== A gerar áudios na língua original ==="))
@@ -1825,6 +1943,8 @@ class PPTXNarratorApp(ctk.CTk):
             
             self.after(0, lambda: self._atualizar_progresso(100, self.idioma.t("estado_concluido")))
             self.after(0, lambda: self._log(f"Áudios guardados em: {pasta}"))
+            # Registar pasta de áudios para acesso rápido
+            self.after(0, lambda: self._registar_ficheiro_gerado(pasta, "Áudios"))
             self.a_processar = False
             self.after(0, self._atualizar_estado_botoes)
             self.after(0, self._atualizar_lista_slides)
@@ -1894,15 +2014,8 @@ class PPTXNarratorApp(ctk.CTk):
         def processar():
             total = self.pptx.num_slides
             
-            # Determinar pasta de saída
-            if getattr(self, '_audio_junto_pptx', True):
-                pasta = os.path.dirname(self.pptx.apresentacao.caminho)
-            elif self._pasta_saida:
-                pasta = self._pasta_saida
-            else:
-                pasta = tempfile.mkdtemp(prefix="pptx_audio_trad_")
-            
-            os.makedirs(pasta, exist_ok=True)
+            # v1.9.3: Usar pasta estruturada
+            pasta = self._obter_pasta_estruturada("audio")
             
             # Código do idioma destino para sufixo
             idioma_dest = self.tradutor.config.idioma_destino[:2]
@@ -1924,6 +2037,8 @@ class PPTXNarratorApp(ctk.CTk):
             
             self.after(0, lambda: self._atualizar_progresso(100, self.idioma.t("estado_concluido")))
             self.after(0, lambda: self._log(f"Áudios traduzidos guardados em: {pasta}"))
+            # Registar pasta de áudios para acesso rápido
+            self.after(0, lambda: self._registar_ficheiro_gerado(pasta, "Áudios Traduzidos"))
             self.a_processar = False
             self.after(0, self._atualizar_estado_botoes)
             self.after(0, lambda: self._selecionar_slide(self.slide_atual))
@@ -1983,9 +2098,16 @@ class PPTXNarratorApp(ctk.CTk):
             if not messagebox.askyesno("Confirmar Geração PPTX", resumo):
                 return
         
+        # v1.9.3: Usar pasta estruturada com nome predefinido
+        pasta_pptx = self._obter_pasta_estruturada("pptx")
+        nome_base = self._obter_nome_base_apresentacao()
+        nome_predefinido = f"{nome_base}_narrado.pptx"
+        
         # Pedir caminho
         caminho = filedialog.asksaveasfilename(
             title=self.idioma.t("dlg_guardar_titulo"),
+            initialdir=pasta_pptx,
+            initialfile=nome_predefinido,
             defaultextension=".pptx",
             filetypes=[("PowerPoint", "*.pptx")]
         )
@@ -1996,6 +2118,7 @@ class PPTXNarratorApp(ctk.CTk):
                                         legenda_no_slide=legenda_slide,
                                         legenda_nas_notas=legenda_notas):
             self._log(self.idioma.t("msg_pptx_guardado", caminho))
+            self._registar_ficheiro_gerado(caminho, "PPTX")
             messagebox.showinfo("", self.idioma.t("msg_pptx_guardado", caminho))
         else:
             messagebox.showerror("", self.idioma.t("msg_erro_gerar", "PPTX"))
@@ -2273,9 +2396,16 @@ class PPTXNarratorApp(ctk.CTk):
             if not messagebox.askyesno("Confirmar Geração Vídeo", resumo):
                 return
         
+        # v1.9.3: Usar pasta estruturada com nome predefinido
+        pasta_video = self._obter_pasta_estruturada("video")
+        nome_base = self._obter_nome_base_apresentacao()
+        nome_predefinido = f"{nome_base}.mp4"
+        
         # Pedir caminho
         caminho = filedialog.asksaveasfilename(
             title=self.idioma.t("dlg_guardar_titulo"),
+            initialdir=pasta_video,
+            initialfile=nome_predefinido,
             defaultextension=".mp4",
             filetypes=[("Vídeo MP4", "*.mp4")]
         )
@@ -2283,8 +2413,8 @@ class PPTXNarratorApp(ctk.CTk):
             return
         
         # Verificar se os slides têm áudio configurado
-        # Se não tiverem, procurar na pasta do vídeo ou na pasta original do PPTX
-        pasta_video = os.path.dirname(caminho)
+        # Se não tiverem, procurar na pasta de áudios estruturada ou na pasta original do PPTX
+        pasta_audio = self._obter_pasta_estruturada("audio")
         pasta_pptx_original = os.path.dirname(self.pptx.apresentacao.caminho)
         
         audios_encontrados = 0
@@ -2292,7 +2422,7 @@ class PPTXNarratorApp(ctk.CTk):
             slide = self.pptx.obter_slide(i)
             if slide and not slide.caminho_audio:
                 # Procurar áudio na pasta do vídeo ou na pasta do PPTX
-                for pasta in [pasta_video, pasta_pptx_original]:
+                for pasta in [pasta_audio, pasta_pptx_original]:
                     caminho_audio = os.path.join(pasta, f"slide_{i:02d}.mp3")
                     if os.path.exists(caminho_audio):
                         from tts_engine import MotorTTS
@@ -2374,6 +2504,7 @@ class PPTXNarratorApp(ctk.CTk):
             self.video.definir_callback_progresso(callback_progresso)
             if self.video.gerar_video(self.pptx, caminho, usar_audio_traduzido=usar_traduzido):
                 self.after(0, lambda: messagebox.showinfo("", self.idioma.t("msg_video_guardado", caminho)))
+                self.after(0, lambda: self._registar_ficheiro_gerado(caminho, "Video"))
                 
                 # Gerar SRT automaticamente se opção ativa (v1.7)
                 if self.var_gerar_srt_auto.get():
